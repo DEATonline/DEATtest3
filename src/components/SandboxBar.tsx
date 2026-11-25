@@ -1,6 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeftRight,
   ChevronDown,
   ChevronRight,
   CloudUpload,
@@ -23,6 +22,7 @@ import {
   Trash2,
   Undo2,
   Upload,
+  Waypoints,
   X,
 } from 'lucide-react';
 import {
@@ -45,8 +45,9 @@ interface SandboxBarProps {
   routeColor: string;
   defaultAircraft: string;
   defaultRouteType: string;
-  bidirectionalDraw: boolean;
   pinOriginDraw: boolean;
+  chainLegsDraw: boolean;
+  version: string;
   availableAircraft: string[];
   airports: Airport[];
   routes: RouteSector[];
@@ -63,8 +64,8 @@ interface SandboxBarProps {
   onChangeColor: (color: string) => void;
   onChangeDefaultAircraft: (aircraft: string) => void;
   onChangeDefaultRouteType: (routeType: string) => void;
-  onToggleBidirectionalDraw: () => void;
   onTogglePinOriginDraw: () => void;
+  onToggleChainLegsDraw: () => void;
   onToggleOverlay: (key: keyof AdminOverlayState) => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -75,6 +76,7 @@ interface SandboxBarProps {
   onResetToLive: () => void;
   onFocusAirport: (airport: Airport) => void;
   onInspectRoute: (route: RouteSector) => void;
+  onOpenChangelog: () => void;
   onOpenPublish: () => void;
   onExit: () => void;
 }
@@ -87,8 +89,9 @@ export function SandboxBar({
   routeColor,
   defaultAircraft,
   defaultRouteType,
-  bidirectionalDraw,
   pinOriginDraw,
+  chainLegsDraw,
+  version,
   availableAircraft,
   airports,
   routes,
@@ -105,8 +108,8 @@ export function SandboxBar({
   onChangeColor,
   onChangeDefaultAircraft,
   onChangeDefaultRouteType,
-  onToggleBidirectionalDraw,
   onTogglePinOriginDraw,
+  onToggleChainLegsDraw,
   onToggleOverlay,
   onUndo,
   onRedo,
@@ -117,6 +120,7 @@ export function SandboxBar({
   onResetToLive,
   onFocusAirport,
   onInspectRoute,
+  onOpenChangelog,
   onOpenPublish,
   onExit,
 }: SandboxBarProps) {
@@ -297,6 +301,15 @@ export function SandboxBar({
           <div className="flex flex-col items-center gap-1.5">
             <button
               type="button"
+              onClick={onOpenChangelog}
+              title={`Edit Mode ${version} — View changelog`}
+              aria-label={`View Edit Mode ${version} changelog`}
+              className="font-mono text-[10px] font-semibold tabular-nums text-[var(--ink-muted)] hover:text-[#EE1C25] transition-colors"
+            >
+              {version}
+            </button>
+            <button
+              type="button"
               disabled={diff.totalChanges === 0}
               onClick={onOpenPublish}
               title={
@@ -341,10 +354,18 @@ export function SandboxBar({
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] px-4 py-3 shrink-0">
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-baseline gap-2">
               <h2 className="text-sm font-bold tracking-tight text-[var(--ink)]">
                 Edit Mode
               </h2>
+              <button
+                type="button"
+                onClick={onOpenChangelog}
+                title="View Edit Mode changelog"
+                className="font-mono text-[11px] font-semibold tabular-nums text-[var(--ink-muted)] hover:text-[#EE1C25] underline-offset-2 hover:underline transition-colors"
+              >
+                {version}
+              </button>
             </div>
             <p className="mt-0.5 font-mono text-[11px] tabular-nums text-[var(--ink-muted)] truncate">
               {airports.length} stations · {routes.length} routes
@@ -380,7 +401,8 @@ export function SandboxBar({
             <div className="bg-[var(--sandbox-bg)] px-4 py-2.5 flex items-center justify-between gap-2">
               <div className="min-w-0">
                 <div className="text-[11px] font-medium text-amber-800 dark:text-amber-300">
-                  Origin selected{pinOriginDraw ? ' (pinned)' : ''}
+                  Origin selected
+                  {pinOriginDraw ? ' (pinned)' : chainLegsDraw ? ' (chaining)' : ''}
                 </div>
                 <div className="font-mono text-xs font-bold text-[var(--ink)] truncate">
                   {formatCityName(pendingOrigin.city)} ({pendingOrigin.icao})
@@ -487,33 +509,6 @@ export function SandboxBar({
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={bidirectionalDraw}
-                  onClick={onToggleBidirectionalDraw}
-                  className="flex w-full items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--surface-alt)]/60 px-2.5 py-2 text-left hover:bg-[var(--surface-alt)] transition-colors"
-                >
-                  <span className="flex items-center gap-2 min-w-0">
-                    <ArrowLeftRight className="h-3.5 w-3.5 text-[var(--ink-secondary)] shrink-0" />
-                    <span className="min-w-0">
-                      <span className="block text-xs font-medium text-[var(--ink)] leading-tight">
-                        Round-trip (A ↔ B)
-                      </span>
-                      <span className="block text-[10.5px] text-[var(--ink-muted)] leading-tight mt-0.5">
-                        Create outbound & return together
-                      </span>
-                    </span>
-                  </span>
-                  <span
-                    className={`inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors shrink-0 ${
-                      bidirectionalDraw ? 'bg-amber-600 justify-end' : 'bg-[var(--border-strong)] justify-start'
-                    }`}
-                  >
-                    <span className="h-3 w-3 rounded-full bg-white" />
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  role="switch"
                   aria-checked={pinOriginDraw}
                   onClick={onTogglePinOriginDraw}
                   className="flex w-full items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--surface-alt)]/60 px-2.5 py-2 text-left hover:bg-[var(--surface-alt)] transition-colors"
@@ -525,13 +520,40 @@ export function SandboxBar({
                         Pin origin hub
                       </span>
                       <span className="block text-[10.5px] text-[var(--ink-muted)] leading-tight mt-0.5">
-                        Draw multiple spokes in a row
+                        Draw multiple spokes from one airport
                       </span>
                     </span>
                   </span>
                   <span
                     className={`inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors shrink-0 ${
                       pinOriginDraw ? 'bg-amber-600 justify-end' : 'bg-[var(--border-strong)] justify-start'
+                    }`}
+                  >
+                    <span className="h-3 w-3 rounded-full bg-white" />
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={chainLegsDraw}
+                  onClick={onToggleChainLegsDraw}
+                  className="flex w-full items-center justify-between gap-2 rounded border border-[var(--border)] bg-[var(--surface-alt)]/60 px-2.5 py-2 text-left hover:bg-[var(--surface-alt)] transition-colors"
+                >
+                  <span className="flex items-center gap-2 min-w-0">
+                    <Waypoints className="h-3.5 w-3.5 text-[var(--ink-secondary)] shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-xs font-medium text-[var(--ink)] leading-tight">
+                        Chain legs (A → B → C)
+                      </span>
+                      <span className="block text-[10.5px] text-[var(--ink-muted)] leading-tight mt-0.5">
+                        Continue next route from destination
+                      </span>
+                    </span>
+                  </span>
+                  <span
+                    className={`inline-flex h-4 w-7 items-center rounded-full p-0.5 transition-colors shrink-0 ${
+                      chainLegsDraw ? 'bg-amber-600 justify-end' : 'bg-[var(--border-strong)] justify-start'
                     }`}
                   >
                     <span className="h-3 w-3 rounded-full bg-white" />

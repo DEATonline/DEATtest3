@@ -37,6 +37,7 @@ interface NetworkEditorModalProps {
   adminEmail: string | null;
   draft: NetworkData;
   isDirty: boolean;
+  hasModalChanges: boolean;
   canUndo: boolean;
   canRedo: boolean;
   remoteConflict: boolean;
@@ -50,6 +51,7 @@ interface NetworkEditorModalProps {
   onDiscardDraft: () => void;
   onReloadRemote: () => void;
   onDismissConflict: () => void;
+  onApplyLocalAndClose: () => void;
   onPublish: () => Promise<void>;
   onSignOut: () => Promise<void>;
   onClose: () => void;
@@ -62,6 +64,7 @@ export function NetworkEditorModal({
   adminEmail,
   draft,
   isDirty,
+  hasModalChanges,
   canUndo,
   canRedo,
   remoteConflict,
@@ -75,13 +78,13 @@ export function NetworkEditorModal({
   onDiscardDraft,
   onReloadRemote,
   onDismissConflict,
+  onApplyLocalAndClose,
   onPublish,
   onSignOut,
   onClose,
   onNotify,
 }: NetworkEditorModalProps) {
   const [activeTab, setActiveTab] = useState<'airports' | 'routes'>('airports');
-  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
   const [formError, setFormError] = useState('');
 
   // Airport form state
@@ -148,12 +151,7 @@ export function NetworkEditorModal({
   }, [dropdownAirports, rtOrigin, rtDest]);
 
   const requestClose = () => {
-    if (isDirty) {
-      setConfirmCloseOpen(true);
-    } else {
-      setConfirmCloseOpen(false);
-      onClose();
-    }
+    onClose();
   };
 
   // Keyboard shortcuts inside editor modal
@@ -169,11 +167,7 @@ export function NetworkEditorModal({
 
       if (e.key === 'Escape') {
         e.preventDefault();
-        if (confirmCloseOpen) {
-          setConfirmCloseOpen(false);
-        } else {
-          requestClose();
-        }
+        onClose();
         return;
       }
 
@@ -192,7 +186,7 @@ export function NetworkEditorModal({
 
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [open, confirmCloseOpen, isDirty, canUndo, canRedo, onUndo, onRedo]);
+  }, [open, canUndo, canRedo, onUndo, onRedo, onClose]);
 
   const airportMap = useMemo(
     () => new Map(draft.airports.map((a) => [a.icao, a])),
@@ -656,35 +650,6 @@ export function NetworkEditorModal({
                 className="rounded border border-[var(--border-strong)] bg-[var(--surface)] px-2.5 py-1 font-mono text-[11px] text-[var(--ink)] hover:bg-[var(--surface-alt)]"
               >
                 Keep Local Draft
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Unsaved Close Confirmation Bar */}
-        {confirmCloseOpen && (
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-red-500/40 bg-red-500/5 px-4 sm:px-5 py-2.5 text-xs">
-            <span className="font-medium text-[var(--ink)]">
-              You have unpublished changes in your draft. Discard them or stay to publish?
-            </span>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmCloseOpen(false)}
-                className="rounded border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-1 font-mono text-[11px] font-medium text-[var(--ink)]"
-              >
-                Keep Editing
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  onDiscardDraft();
-                  setConfirmCloseOpen(false);
-                  onClose();
-                }}
-                className="rounded bg-[var(--err)] px-3 py-1 font-mono text-[11px] font-semibold text-white"
-              >
-                Discard &amp; Close
               </button>
             </div>
           </div>
@@ -1416,12 +1381,19 @@ export function NetworkEditorModal({
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2.5">
             {!firebaseReady && (
               <span className="hidden md:inline font-mono text-[11px] text-[var(--ink-muted)]">
                 Local preview · replace firebase-config.js for live sync
               </span>
             )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="h-9 rounded border border-[var(--border-strong)] bg-[var(--surface)] px-3.5 font-mono text-xs font-semibold text-[var(--ink)] hover:bg-[var(--surface-alt)] transition-colors whitespace-nowrap"
+            >
+              Close
+            </button>
             <button
               type="button"
               disabled={publishing || !isDirty}

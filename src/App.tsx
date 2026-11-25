@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { User } from 'firebase/auth';
-import { Eye, Hash, Minus, Moon, Plus, RotateCcw, Sun } from 'lucide-react';
+import { Eye, Minus, Moon, Plus, RotateCcw, Sun } from 'lucide-react';
 import {
   AdminOverlayState,
   Airport,
@@ -52,6 +52,7 @@ import {
   PendingImportPayload,
 } from './components/ImportEditModeModal';
 import { AuthModal } from './components/AuthModal';
+import { ChangelogModal, EDIT_MODE_VERSION } from './components/ChangelogModal';
 import { NetworkEditorModal } from './components/NetworkEditorModal';
 import { ToastContainer } from './components/ToastContainer';
 
@@ -129,9 +130,10 @@ export default function App() {
   const [sandboxColor, setSandboxColor] = useState(DEFAULT_ROUTE_COLOR);
   const [sandboxDefaultAircraft, setSandboxDefaultAircraft] = useState('A320neo');
   const [sandboxDefaultRouteType, setSandboxDefaultRouteType] = useState('Proposed');
-  const [sandboxBidirectional, setSandboxBidirectional] = useState(false);
   const [sandboxPinOrigin, setSandboxPinOrigin] = useState(false);
+  const [sandboxChainLegs, setSandboxChainLegs] = useState(false);
   const [editMenuCollapsed, setEditMenuCollapsed] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const [sandboxSelection, setSandboxSelection] = useState<SandboxSelection | null>(null);
   const [publishSandboxOpen, setPublishSandboxOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingImportPayload | null>(null);
@@ -172,6 +174,11 @@ export default function App() {
   const isDirty = useMemo(
     () => !areNetworksEqual(draft, networkData),
     [draft, networkData],
+  );
+
+  const hasModalChanges = useMemo(
+    () => !areNetworksEqual(draft, sandboxInitialized ? sandboxNetwork : networkData),
+    [draft, sandboxInitialized, sandboxNetwork, networkData],
   );
 
   const editorStateRef = useRef({ editorOpen: false, isDirty: false });
@@ -333,7 +340,7 @@ export default function App() {
           target.tagName === 'SELECT');
 
       if (e.key === 'Escape') {
-        if (editorOpen || authOpen || publishSandboxOpen || pendingImport) return;
+        if (editorOpen || authOpen || publishSandboxOpen || pendingImport || changelogOpen) return;
         if (pinPickerActive) {
           setPinPickerActive(false);
           setEditorOpen(true);
@@ -361,6 +368,7 @@ export default function App() {
         !authOpen &&
         !publishSandboxOpen &&
         !pendingImport &&
+        !changelogOpen &&
         !inInput
       ) {
         if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
@@ -398,6 +406,7 @@ export default function App() {
     authOpen,
     publishSandboxOpen,
     pendingImport,
+    changelogOpen,
     pinPickerActive,
     sandboxMode,
     sandboxPendingOrigin,
@@ -577,6 +586,32 @@ export default function App() {
     setAdminOverlays((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
+  const handleExitEditMode = useCallback(() => {
+    setSandboxMode(false);
+    setSandboxPendingOrigin(null);
+    setSandboxSelection(null);
+    setEditMenuCollapsed(false);
+    setChangelogOpen(false);
+    setSandboxTool('draw');
+    setSandboxColor(DEFAULT_ROUTE_COLOR);
+    setSandboxDefaultAircraft('A320neo');
+    setSandboxDefaultRouteType('Proposed');
+    setSandboxPinOrigin(false);
+    setSandboxChainLegs(false);
+    setAdminOverlays({
+      showLiveRoutes: true,
+      showSandboxRoutes: true,
+      showAirportCounts: false,
+      showAllAirports: false,
+    });
+    setFilters({
+      hub: 'ALL',
+      continent: 'ALL',
+      type: 'ALL',
+      aircraftTypes: new Set(),
+    });
+  }, []);
+
   const handleToggleSandbox = () => {
     if (!isAdminUnlocked) return;
     if (!sandboxMode) {
@@ -597,9 +632,7 @@ export default function App() {
       clearInspector();
       setSandboxMode(true);
     } else {
-      setSandboxMode(false);
-      setSandboxPendingOrigin(null);
-      setSandboxSelection(null);
+      handleExitEditMode();
     }
   };
 
@@ -655,30 +688,16 @@ export default function App() {
               remarks: '',
               color,
             };
-            if (sandboxBidirectional) {
-              const inbound: RouteSector = {
-                origin: dest,
-                dest: origin,
-                aircraftTypes: aircraftList.length ? aircraftList : ['A320neo'],
-                type: cleanType,
-                remarks: '',
-                color,
-              };
-              return { ...prev, routes: [...prev.routes, outbound, inbound] };
-            }
             return { ...prev, routes: [...prev.routes, outbound] };
           });
 
-          if (!sandboxPinOrigin) {
+          if (sandboxChainLegs) {
+            setSandboxPendingOrigin(dest);
+          } else if (!sandboxPinOrigin) {
             setSandboxPendingOrigin(null);
           }
 
-          pushToast(
-            'success',
-            sandboxBidirectional
-              ? `Added round-trip ${origin} ↔ ${dest} locally.`
-              : `Added local route ${origin} → ${dest}.`,
-          );
+          pushToast('success', `Added local route ${origin} → ${dest}.`);
           return;
         }
         return;
@@ -696,8 +715,8 @@ export default function App() {
       sandboxColor,
       sandboxDefaultAircraft,
       sandboxDefaultRouteType,
-      sandboxBidirectional,
       sandboxPinOrigin,
+      sandboxChainLegs,
       updateSandboxNetwork,
       pushToast,
     ],
@@ -1096,6 +1115,15 @@ export default function App() {
     pushToast('info', 'Loaded latest remote network from Firebase.');
   }, [latestRemoteData, networkData, pushToast]);
 
+  const handleCloseEditor = useCallback(() => {
+    if (hasModalChanges) {
+      const cleaned = cloneNetworkData(draft);
+      updateSandboxNetwork(() => cleaned);
+      pushToast('info', 'Kept Network Editor changes on the Edit Mode map.');
+    }
+    setEditorOpen(false);
+  }, [hasModalChanges, draft, updateSandboxNetwork, pushToast]);
+
   const handlePublishEditor = async () => {
     setPublishing(true);
     try {
@@ -1252,8 +1280,9 @@ export default function App() {
           routeColor={sandboxColor}
           defaultAircraft={sandboxDefaultAircraft}
           defaultRouteType={sandboxDefaultRouteType}
-          bidirectionalDraw={sandboxBidirectional}
           pinOriginDraw={sandboxPinOrigin}
+          chainLegsDraw={sandboxChainLegs}
+          version={EDIT_MODE_VERSION}
           availableAircraft={allAircraftTypes}
           airports={sandboxNetwork.airports}
           routes={sandboxNetwork.routes}
@@ -1276,8 +1305,20 @@ export default function App() {
           onChangeColor={(col) => setSandboxColor(col)}
           onChangeDefaultAircraft={(ac) => setSandboxDefaultAircraft(ac)}
           onChangeDefaultRouteType={(rt) => setSandboxDefaultRouteType(rt)}
-          onToggleBidirectionalDraw={() => setSandboxBidirectional((b) => !b)}
-          onTogglePinOriginDraw={() => setSandboxPinOrigin((p) => !p)}
+          onTogglePinOriginDraw={() => {
+            setSandboxPinOrigin((p) => {
+              const next = !p;
+              if (next) setSandboxChainLegs(false);
+              return next;
+            });
+          }}
+          onToggleChainLegsDraw={() => {
+            setSandboxChainLegs((c) => {
+              const next = !c;
+              if (next) setSandboxPinOrigin(false);
+              return next;
+            });
+          }}
           onToggleOverlay={handleToggleOverlay}
           onUndo={handleSandboxUndo}
           onRedo={handleSandboxRedo}
@@ -1301,12 +1342,9 @@ export default function App() {
               if (originAp) mapRef.current?.flyToAirport(originAp);
             }
           }}
+          onOpenChangelog={() => setChangelogOpen(true)}
           onOpenPublish={() => setPublishSandboxOpen(true)}
-          onExit={() => {
-            setSandboxMode(false);
-            setSandboxPendingOrigin(null);
-            setSandboxSelection(null);
-          }}
+          onExit={handleExitEditMode}
         />
       )}
 
@@ -1388,37 +1426,20 @@ export default function App() {
       {/* Bottom-Right Admin Overlays, Zoom & Theme Strip */}
       <div className="fixed bottom-3 right-3 sm:right-4 z-20 flex h-8 items-center overflow-hidden rounded border border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-sm">
         {isAdminUnlocked && (
-          <>
-            <button
-              type="button"
-              onClick={() => handleToggleOverlay('showAirportCounts')}
-              aria-pressed={adminOverlays.showAirportCounts}
-              title="Toggle sector count numbers above airports (Admin only)"
-              className={`inline-flex h-full items-center gap-1.5 border-r border-[var(--border)] px-2.5 font-mono text-[10.5px] font-semibold transition-colors whitespace-nowrap ${
-                adminOverlays.showAirportCounts
-                  ? 'bg-[var(--surface-alt)] text-amber-700 dark:text-amber-400'
-                  : 'text-[var(--ink)] hover:bg-[var(--surface-alt)]'
-              }`}
-            >
-              <Hash className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Counts</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleToggleOverlay('showAllAirports')}
-              aria-pressed={adminOverlays.showAllAirports}
-              title="Show inactive and filtered airports on the map (Admin only)"
-              className={`inline-flex h-full items-center gap-1.5 border-r border-[var(--border)] px-2.5 font-mono text-[10.5px] font-semibold transition-colors whitespace-nowrap ${
-                adminOverlays.showAllAirports
-                  ? 'bg-[var(--surface-alt)] text-[#EE1C25]'
-                  : 'text-[var(--ink)] hover:bg-[var(--surface-alt)]'
-              }`}
-            >
-              <Eye className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">All Airports</span>
-            </button>
-          </>
+          <button
+            type="button"
+            onClick={() => handleToggleOverlay('showAllAirports')}
+            aria-pressed={adminOverlays.showAllAirports}
+            title="Show inactive and filtered airports on the map (Admin only)"
+            className={`inline-flex h-full items-center gap-1.5 border-r border-[var(--border)] px-2.5 font-mono text-[10.5px] font-semibold transition-colors whitespace-nowrap ${
+              adminOverlays.showAllAirports
+                ? 'bg-[var(--surface-alt)] text-[#EE1C25]'
+                : 'text-[var(--ink)] hover:bg-[var(--surface-alt)]'
+            }`}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">All Airports</span>
+          </button>
         )}
 
         <button
@@ -1471,6 +1492,12 @@ export default function App() {
         onSignIn={handleAdminSignIn}
       />
 
+      {/* Edit Mode Changelog Modal */}
+      <ChangelogModal
+        open={changelogOpen}
+        onClose={() => setChangelogOpen(false)}
+      />
+
       {/* Import Mode Choice Modal (Admin-only) */}
       {isAdminUnlocked && (
         <ImportEditModeModal
@@ -1506,6 +1533,7 @@ export default function App() {
         adminEmail={currentUser?.email || null}
         draft={draft}
         isDirty={isDirty}
+        hasModalChanges={hasModalChanges}
         canUndo={undoStack.length > 0}
         canRedo={redoStack.length > 0}
         remoteConflict={remoteConflict}
@@ -1522,9 +1550,10 @@ export default function App() {
         onDiscardDraft={handleDiscardDraft}
         onReloadRemote={handleReloadRemote}
         onDismissConflict={() => setRemoteConflict(false)}
+        onApplyLocalAndClose={handleCloseEditor}
         onPublish={handlePublishEditor}
         onSignOut={handleAdminSignOut}
-        onClose={() => setEditorOpen(false)}
+        onClose={handleCloseEditor}
         onNotify={pushToast}
       />
 
