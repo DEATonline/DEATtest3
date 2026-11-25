@@ -18,8 +18,8 @@ import {
   Redo2,
   RotateCcw,
   Route,
+  Settings2,
   SlidersHorizontal,
-  Table2,
   Trash2,
   Undo2,
   Upload,
@@ -279,6 +279,18 @@ export function SandboxBar({
               }`}
             >
               <Hash className="h-4 w-4" />
+            </button>
+
+            <div className="my-1 h-px w-6 bg-[var(--border)]" />
+
+            <button
+              type="button"
+              onClick={onOpenInEditor}
+              title="Open Network Editor"
+              aria-label="Open Network Editor"
+              className="inline-flex h-8 w-8 items-center justify-center rounded text-[var(--ink-secondary)] hover:bg-[var(--surface-alt)] hover:text-[var(--ink)] transition-colors"
+            >
+              <Settings2 className="h-4 w-4" />
             </button>
           </div>
 
@@ -845,10 +857,10 @@ export function SandboxBar({
             <button
               type="button"
               onClick={onOpenInEditor}
-              className="flex h-8 w-full items-center justify-center gap-1.5 rounded border border-[var(--border)] bg-[var(--surface-alt)]/70 px-2.5 text-xs font-medium text-[var(--ink)] hover:bg-[var(--surface-alt)] transition-colors whitespace-nowrap"
+              className="flex h-9 w-full items-center justify-center gap-1.5 rounded border border-[var(--border-strong)] bg-[var(--surface-alt)] px-2.5 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--border)]/40 transition-colors whitespace-nowrap"
             >
-              <Table2 className="h-3.5 w-3.5 text-[var(--ink-secondary)]" />
-              <span>Open draft in Table Editor</span>
+              <Settings2 className="h-3.5 w-3.5 text-[#EE1C25]" />
+              <span>Network Editor</span>
             </button>
 
             <div className="grid grid-cols-2 gap-1.5 pt-0.5">

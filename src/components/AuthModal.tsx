@@ -82,8 +82,8 @@ export function AuthModal({ open, onClose, onSignIn }: AuthModalProps) {
         <form onSubmit={handleSubmit}>
           <div className="p-5 space-y-4">
             <p className="text-xs leading-relaxed text-[var(--ink-muted)]">
-              Sign in with your authorized DEAT admin account to unlock the Network Editor,
-              Edit Mode, and publish changes to Firebase.
+              Sign in with your authorized DEAT admin account to unlock Edit Mode, the Network
+              Editor, and live publishing to Firebase.
             </p>
 
             <div className="space-y-1.5">

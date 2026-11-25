@@ -1010,25 +1010,13 @@ export default function App() {
     setUndoStack([]);
     setRedoStack([]);
     setPublishSandboxOpen(false);
-    setSandboxMode(false);
-    setSandboxSelection(null);
     setSandboxPendingOrigin(null);
     setEditorOpen(true);
-    pushToast('info', 'Loaded Edit Mode draft into Network Editor.');
   };
 
-  // Network Editor handlers
-  const handleOpenEditor = () => {
-    if (firebaseReady && !currentUser) {
-      setAuthOpen(true);
-      return;
-    }
-    if (!isDirty) {
-      setDraft(cloneNetworkData(networkData));
-      setUndoStack([]);
-      setRedoStack([]);
-    }
-    setEditorOpen(true);
+  // Admin Login handler (opens Auth modal directly from TopBar)
+  const handleOpenAdminLogin = () => {
+    setAuthOpen(true);
   };
 
   const handleAdminSignIn = async (email: string, password: string) => {
@@ -1037,8 +1025,7 @@ export default function App() {
     setDraft(cloneNetworkData(networkData));
     setUndoStack([]);
     setRedoStack([]);
-    setEditorOpen(true);
-    pushToast('success', 'Signed in to DEAT Admin.');
+    pushToast('success', 'Signed in to DEAT Admin. Edit Mode is now unlocked.');
   };
 
   const handleAdminSignOut = async () => {
@@ -1116,9 +1103,13 @@ export default function App() {
         setSyncState('saving');
         setSyncText('Publishing');
         await publishNetworkState(draft, currentUser);
-        setNetworkData(cloneNetworkData(draft));
+        const published = cloneNetworkData(draft);
+        setNetworkData(published);
+        setSandboxNetwork(cloneNetworkData(published));
         setUndoStack([]);
         setRedoStack([]);
+        setSandboxUndoStack([]);
+        setSandboxRedoStack([]);
         setRemoteConflict(false);
         setSyncState('synced');
         setSyncText('Live');
@@ -1127,8 +1118,11 @@ export default function App() {
       } else {
         const cleaned = cloneNetworkData(draft);
         setNetworkData(cleaned);
+        setSandboxNetwork(cloneNetworkData(cleaned));
         setUndoStack([]);
         setRedoStack([]);
+        setSandboxUndoStack([]);
+        setSandboxRedoStack([]);
         try {
           localStorage.setItem(PREVIEW_STORAGE_KEY, JSON.stringify(cleaned));
         } catch {
@@ -1228,6 +1222,8 @@ export default function App() {
         sandboxMode={sandboxMode}
         sandboxRouteCount={sandboxNetwork.routes.length}
         isAdminUnlocked={isAdminUnlocked}
+        firebaseReady={firebaseReady}
+        adminEmail={currentUser?.email || null}
         syncState={effectiveSyncState}
         syncText={effectiveSyncText}
         filters={filters}
@@ -1242,7 +1238,8 @@ export default function App() {
         }
         onJumpToAirport={handleJumpToAirport}
         onToggleSandbox={handleToggleSandbox}
-        onOpenEditor={handleOpenEditor}
+        onOpenAdminLogin={handleOpenAdminLogin}
+        onSignOutAdmin={handleAdminSignOut}
       />
 
       {/* Left Vertical Edit Mode Menu (Admin-only) */}

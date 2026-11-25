@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   Filter,
+  LogIn,
+  LogOut,
   PenTool,
   Search,
-  Settings2,
   X,
 } from 'lucide-react';
 import { Airport, CONTINENTS, FilterState, SyncState } from '../types/network';
@@ -21,6 +22,8 @@ interface TopBarProps {
   sandboxMode: boolean;
   sandboxRouteCount: number;
   isAdminUnlocked: boolean;
+  firebaseReady: boolean;
+  adminEmail: string | null;
   syncState: SyncState;
   syncText: string;
   filters: FilterState;
@@ -28,7 +31,8 @@ interface TopBarProps {
   onResetFilters: () => void;
   onJumpToAirport: (airport: Airport) => void;
   onToggleSandbox: () => void;
-  onOpenEditor: () => void;
+  onOpenAdminLogin: () => void;
+  onSignOutAdmin: () => void;
 }
 
 export function TopBar({
@@ -42,6 +46,8 @@ export function TopBar({
   sandboxMode,
   sandboxRouteCount,
   isAdminUnlocked,
+  firebaseReady,
+  adminEmail,
   syncState,
   syncText,
   filters,
@@ -49,7 +55,8 @@ export function TopBar({
   onResetFilters,
   onJumpToAirport,
   onToggleSandbox,
-  onOpenEditor,
+  onOpenAdminLogin,
+  onSignOutAdmin,
 }: TopBarProps) {
   const [fleetOpen, setFleetOpen] = useState(false);
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
@@ -466,11 +473,11 @@ export function TopBar({
                 type="button"
                 onClick={onToggleSandbox}
                 aria-pressed={sandboxMode}
-                title="Local Edit Mode (Admin only)"
-                className={`hidden sm:inline-flex h-9 items-center gap-1.5 rounded border px-3 font-mono text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 ${
+                title="Open Edit Mode workspace (Admin only)"
+                className={`inline-flex h-9 items-center gap-1.5 rounded border px-3 font-mono text-[11px] font-semibold transition-colors whitespace-nowrap shrink-0 ${
                   sandboxMode
                     ? 'border-amber-600 bg-amber-600 text-white hover:bg-amber-700'
-                    : 'border-[var(--border)] bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--surface-alt)]'
+                    : 'border-[#EE1C25] bg-[#EE1C25] text-white hover:bg-[#cc121a]'
                 }`}
               >
                 <PenTool className="h-3.5 w-3.5" />
@@ -478,16 +485,31 @@ export function TopBar({
               </button>
             )}
 
-            {/* Primary CTA: Network Editor */}
-            <button
-              type="button"
-              onClick={onOpenEditor}
-              className="inline-flex h-9 items-center gap-1.5 rounded bg-[#EE1C25] px-3 sm:px-3.5 font-mono text-[11px] font-semibold text-white hover:bg-[#cc121a] transition-colors whitespace-nowrap shrink-0"
-            >
-              <Settings2 className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Network Editor</span>
-              <span className="sm:hidden">Editor</span>
-            </button>
+            {/* Admin Login / Sign Out */}
+            {!isAdminUnlocked ? (
+              <button
+                type="button"
+                onClick={onOpenAdminLogin}
+                className="inline-flex h-9 items-center gap-1.5 rounded bg-[#EE1C25] px-3 sm:px-3.5 font-mono text-[11px] font-semibold text-white hover:bg-[#cc121a] transition-colors whitespace-nowrap shrink-0"
+              >
+                <LogIn className="h-3.5 w-3.5" />
+                <span className="hidden sm:inline">Admin Login</span>
+                <span className="sm:hidden">Admin</span>
+              </button>
+            ) : (
+              firebaseReady &&
+              adminEmail && (
+                <button
+                  type="button"
+                  onClick={onSignOutAdmin}
+                  title={`Signed in as ${adminEmail} — Click to sign out`}
+                  className="hidden sm:inline-flex h-9 items-center gap-1.5 rounded border border-[var(--border)] bg-[var(--surface)] px-3 font-mono text-[11px] font-medium text-[var(--ink-secondary)] hover:bg-[var(--surface-alt)] hover:text-[var(--ink)] transition-colors whitespace-nowrap shrink-0"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Sign Out</span>
+                </button>
+              )
+            )}
           </div>
         </div>
       </header>
@@ -637,25 +659,52 @@ export function TopBar({
                 </div>
               </div>
 
-              {isAdminUnlocked && (
-                <div className="pt-2 border-t border-[var(--border)]">
+              <div className="pt-2 border-t border-[var(--border)] space-y-2">
+                {isAdminUnlocked ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onToggleSandbox();
+                        setMobileDrawerOpen(false);
+                      }}
+                      className={`flex h-10 w-full items-center justify-center gap-2 rounded border font-mono text-xs font-semibold ${
+                        sandboxMode
+                          ? 'border-amber-600 bg-amber-600 text-white'
+                          : 'border-[var(--border-strong)] bg-[var(--surface-alt)] text-[var(--ink)]'
+                      }`}
+                    >
+                      <PenTool className="h-4 w-4" />
+                      <span>{sandboxMode ? 'Exit Edit Mode' : 'Enter Edit Mode'}</span>
+                    </button>
+                    {firebaseReady && adminEmail && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onSignOutAdmin();
+                          setMobileDrawerOpen(false);
+                        }}
+                        className="flex h-9 w-full items-center justify-center gap-2 rounded border border-[var(--border)] bg-[var(--surface)] font-mono text-xs text-[var(--ink-secondary)] hover:bg-[var(--surface-alt)]"
+                      >
+                        <LogOut className="h-3.5 w-3.5" />
+                        <span>Sign Out ({adminEmail})</span>
+                      </button>
+                    )}
+                  </>
+                ) : (
                   <button
                     type="button"
                     onClick={() => {
-                      onToggleSandbox();
                       setMobileDrawerOpen(false);
+                      onOpenAdminLogin();
                     }}
-                    className={`flex h-10 w-full items-center justify-center gap-2 rounded border font-mono text-xs font-semibold ${
-                      sandboxMode
-                        ? 'border-amber-600 bg-amber-600 text-white'
-                        : 'border-[var(--border-strong)] bg-[var(--surface-alt)] text-[var(--ink)]'
-                    }`}
+                    className="flex h-10 w-full items-center justify-center gap-2 rounded bg-[#EE1C25] font-mono text-xs font-semibold text-white hover:bg-[#cc121a]"
                   >
-                    <PenTool className="h-4 w-4" />
-                    <span>{sandboxMode ? 'Exit Edit Mode' : 'Enter Edit Mode'}</span>
+                    <LogIn className="h-4 w-4" />
+                    <span>Admin Login</span>
                   </button>
-                </div>
-              )}
+                )}
+              </div>
             </div>
 
             <div className="flex items-center justify-between border-t border-[var(--border)] bg-[var(--surface-alt)] px-4 py-3">

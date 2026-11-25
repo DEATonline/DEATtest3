@@ -562,10 +562,10 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
   const activeFocusAirport = hoveredAirportIcao || selectedAirportIcao || sandboxPendingOrigin;
   const activeRouteKey = hoveredRouteTooltip?.item.key || selectedRouteKey;
 
-  const landFill = darkMode ? '#1c2433' : '#dce1e8';
-  const landStroke = darkMode ? '#0b0f17' : '#ffffff';
+  const landFill = darkMode ? '#1c2433' : '#e1e6ed';
+  const landStroke = darkMode ? '#0b0f17' : '#f3f5f8';
   const markerFill = darkMode ? '#0b0f17' : '#ffffff';
-  const labelHalo = darkMode ? '#0b0f17' : '#ffffff';
+  const labelHalo = darkMode ? '#0b0f17' : '#f3f5f8';
 
   const tooltipStyle = useMemo(() => {
     if (!hoveredRouteTooltip) return undefined;
