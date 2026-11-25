@@ -206,7 +206,7 @@ export function SandboxItemPanel({
     return (
       <aside
         aria-label="Edit Mode station editor"
-        className="fixed bottom-28 left-3 right-3 sm:right-auto sm:bottom-auto sm:top-24 sm:left-4 sm:w-[344px] max-h-[54vh] sm:max-h-[calc(100vh-190px)] overflow-y-auto z-30 rounded border border-amber-500/80 bg-[var(--surface)]/95 backdrop-blur-sm p-4 flex flex-col gap-3 shadow-md"
+        className="fixed bottom-14 left-3 right-3 sm:left-auto sm:bottom-auto sm:top-16 sm:right-4 sm:w-[344px] max-h-[58vh] sm:max-h-[calc(100vh-128px)] overflow-y-auto z-30 rounded border border-amber-500/80 bg-[var(--surface)]/95 backdrop-blur-sm p-4 flex flex-col gap-3 shadow-md"
       >
         <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-2.5">
           <div className="min-w-0">
@@ -482,7 +482,7 @@ export function SandboxItemPanel({
   return (
     <aside
       aria-label="Edit Mode route editor"
-      className="fixed bottom-28 left-3 right-3 sm:right-auto sm:bottom-auto sm:top-24 sm:left-4 sm:w-[344px] max-h-[54vh] sm:max-h-[calc(100vh-190px)] overflow-y-auto z-30 rounded border border-amber-500/80 bg-[var(--surface)]/95 backdrop-blur-sm p-4 flex flex-col gap-3 shadow-md"
+      className="fixed bottom-14 left-3 right-3 sm:left-auto sm:bottom-auto sm:top-16 sm:right-4 sm:w-[344px] max-h-[58vh] sm:max-h-[calc(100vh-128px)] overflow-y-auto z-30 rounded border border-amber-500/80 bg-[var(--surface)]/95 backdrop-blur-sm p-4 flex flex-col gap-3 shadow-md"
     >
       <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] pb-2.5">
         <div className="min-w-0">

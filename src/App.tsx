@@ -22,6 +22,7 @@ import {
   isValidHexColor,
   mergeImportedIntoWorkspace,
   mergeNewItemsIntoLive,
+  parseAircraftList,
   SAMPLE_NETWORK_DATA,
   sanitizeNetworkPayload,
 } from './utils/networkUtils';
@@ -126,6 +127,11 @@ export default function App() {
   const [sandboxTool, setSandboxTool] = useState<SandboxTool>('draw');
   const [sandboxPendingOrigin, setSandboxPendingOrigin] = useState<string | null>(null);
   const [sandboxColor, setSandboxColor] = useState(DEFAULT_ROUTE_COLOR);
+  const [sandboxDefaultAircraft, setSandboxDefaultAircraft] = useState('A320neo');
+  const [sandboxDefaultRouteType, setSandboxDefaultRouteType] = useState('Proposed');
+  const [sandboxBidirectional, setSandboxBidirectional] = useState(false);
+  const [sandboxPinOrigin, setSandboxPinOrigin] = useState(false);
+  const [editMenuCollapsed, setEditMenuCollapsed] = useState(false);
   const [sandboxSelection, setSandboxSelection] = useState<SandboxSelection | null>(null);
   const [publishSandboxOpen, setPublishSandboxOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingImportPayload | null>(null);
@@ -364,6 +370,23 @@ export default function App() {
         } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'y') {
           e.preventDefault();
           handleSandboxRedo();
+        } else if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+          const lower = e.key.toLowerCase();
+          if (lower === 'd') {
+            setSandboxTool('draw');
+            setSandboxPendingOrigin(null);
+          } else if (lower === 'e') {
+            setSandboxTool('select');
+            setSandboxPendingOrigin(null);
+          } else if (lower === 'a') {
+            setSandboxTool('add-airport');
+            setSandboxPendingOrigin(null);
+            setSandboxSelection(null);
+          } else if (lower === 'x') {
+            setSandboxTool('erase');
+            setSandboxPendingOrigin(null);
+            setSandboxSelection(null);
+          }
         }
       }
     };
@@ -620,20 +643,42 @@ export default function App() {
           const origin = sandboxPendingOrigin;
           const dest = airport.icao;
           const color = isValidHexColor(sandboxColor) ? sandboxColor : DEFAULT_ROUTE_COLOR;
+          const aircraftList = parseAircraftList(sandboxDefaultAircraft);
+          const cleanType = sandboxDefaultRouteType.trim() || 'Proposed';
 
           updateSandboxNetwork((prev) => {
-            const newRoute: RouteSector = {
+            const outbound: RouteSector = {
               origin,
               dest,
-              aircraftTypes: ['A320neo'],
-              type: 'Proposed',
+              aircraftTypes: aircraftList.length ? aircraftList : ['A320neo'],
+              type: cleanType,
               remarks: '',
               color,
             };
-            return { ...prev, routes: [...prev.routes, newRoute] };
+            if (sandboxBidirectional) {
+              const inbound: RouteSector = {
+                origin: dest,
+                dest: origin,
+                aircraftTypes: aircraftList.length ? aircraftList : ['A320neo'],
+                type: cleanType,
+                remarks: '',
+                color,
+              };
+              return { ...prev, routes: [...prev.routes, outbound, inbound] };
+            }
+            return { ...prev, routes: [...prev.routes, outbound] };
           });
-          setSandboxPendingOrigin(null);
-          pushToast('success', `Added local route ${origin} → ${dest}. Click it to edit details.`);
+
+          if (!sandboxPinOrigin) {
+            setSandboxPendingOrigin(null);
+          }
+
+          pushToast(
+            'success',
+            sandboxBidirectional
+              ? `Added round-trip ${origin} ↔ ${dest} locally.`
+              : `Added local route ${origin} → ${dest}.`,
+          );
           return;
         }
         return;
@@ -649,6 +694,10 @@ export default function App() {
       sandboxNetwork.routes,
       sandboxPendingOrigin,
       sandboxColor,
+      sandboxDefaultAircraft,
+      sandboxDefaultRouteType,
+      sandboxBidirectional,
+      sandboxPinOrigin,
       updateSandboxNetwork,
       pushToast,
     ],
@@ -1196,19 +1245,29 @@ export default function App() {
         onOpenEditor={handleOpenEditor}
       />
 
-      {/* Redesigned Sandbox Studio Bar & Bottom Dock (Admin-only) */}
+      {/* Left Vertical Edit Mode Menu (Admin-only) */}
       {isAdminUnlocked && (
         <SandboxBar
           active={sandboxMode}
+          collapsed={editMenuCollapsed}
           tool={sandboxTool}
           pendingOrigin={pendingOriginAirport}
           routeColor={sandboxColor}
-          routeCount={sandboxNetwork.routes.length}
+          defaultAircraft={sandboxDefaultAircraft}
+          defaultRouteType={sandboxDefaultRouteType}
+          bidirectionalDraw={sandboxBidirectional}
+          pinOriginDraw={sandboxPinOrigin}
+          availableAircraft={allAircraftTypes}
+          airports={sandboxNetwork.airports}
+          routes={sandboxNetwork.routes}
           diff={sandboxDiff}
           overlays={adminOverlays}
           canUndo={sandboxUndoStack.length > 0}
           canRedo={sandboxRedoStack.length > 0}
+          undoCount={sandboxUndoStack.length}
+          redoCount={sandboxRedoStack.length}
           firebaseReady={firebaseReady}
+          onToggleCollapse={() => setEditMenuCollapsed((c) => !c)}
           onChangeTool={(nextTool) => {
             setSandboxTool(nextTool);
             setSandboxPendingOrigin(null);
@@ -1216,14 +1275,35 @@ export default function App() {
               setSandboxSelection(null);
             }
           }}
+          onCancelPendingOrigin={() => setSandboxPendingOrigin(null)}
           onChangeColor={(col) => setSandboxColor(col)}
+          onChangeDefaultAircraft={(ac) => setSandboxDefaultAircraft(ac)}
+          onChangeDefaultRouteType={(rt) => setSandboxDefaultRouteType(rt)}
+          onToggleBidirectionalDraw={() => setSandboxBidirectional((b) => !b)}
+          onTogglePinOriginDraw={() => setSandboxPinOrigin((p) => !p)}
           onToggleOverlay={handleToggleOverlay}
           onUndo={handleSandboxUndo}
           onRedo={handleSandboxRedo}
           onImportFile={handleSandboxImport}
           onExport={handleSandboxExport}
+          onOpenInEditor={handleOpenSandboxInEditor}
           onClearRoutes={handleClearSandboxRoutes}
           onResetToLive={handleResetSandboxToLive}
+          onFocusAirport={(airport) => {
+            mapRef.current?.flyToAirport(airport);
+            setSandboxSelection({ kind: 'airport', icao: airport.icao });
+          }}
+          onInspectRoute={(targetRoute) => {
+            const sig = getRouteContentSignature(targetRoute);
+            const idx = sandboxNetwork.routes.findIndex(
+              (r) => getRouteContentSignature(r) === sig,
+            );
+            if (idx >= 0) {
+              setSandboxSelection({ kind: 'route', routeIndex: idx });
+              const originAp = sandboxNetwork.airports.find((a) => a.icao === targetRoute.origin);
+              if (originAp) mapRef.current?.flyToAirport(originAp);
+            }
+          }}
           onOpenPublish={() => setPublishSandboxOpen(true)}
           onExit={() => {
             setSandboxMode(false);
@@ -1279,7 +1359,15 @@ export default function App() {
       )}
 
       {/* Bottom-Left Cartographic Legend */}
-      <div className="fixed bottom-3 left-3 sm:left-4 z-20 hidden sm:flex h-8 items-center gap-3.5 rounded border border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-sm px-3 font-mono text-[10.5px] text-[var(--ink-secondary)]">
+      <div
+        className={`fixed bottom-3 z-20 hidden sm:flex h-8 items-center gap-3.5 rounded border border-[var(--border)] bg-[var(--surface)]/95 backdrop-blur-sm px-3 font-mono text-[10.5px] text-[var(--ink-secondary)] ${
+          isAdminUnlocked && sandboxMode
+            ? editMenuCollapsed
+              ? 'left-[64px]'
+              : 'left-[284px]'
+            : 'left-3 sm:left-4'
+        }`}
+      >
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full border-2 border-[#EE1C25] bg-[var(--marker-fill)]" />
           Hub

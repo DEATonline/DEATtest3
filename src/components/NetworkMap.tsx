@@ -968,7 +968,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
       )}
 
       {sandboxMode && sandboxTool === 'add-airport' && pickerCursorCoords && (
-        <div className="fixed top-24 right-4 z-30 pointer-events-none rounded border border-amber-500/70 bg-[var(--surface)]/95 px-3 py-1.5 font-mono text-[11px] tabular-nums text-[var(--ink)] shadow-sm">
+        <div className="fixed top-16 right-4 z-30 pointer-events-none rounded border border-amber-500/70 bg-[var(--surface)]/95 px-3 py-1.5 font-mono text-[11px] tabular-nums text-[var(--ink)] shadow-sm">
           {pickerCursorCoords.lat.toFixed(4)}°, {pickerCursorCoords.lon.toFixed(4)}° ·{' '}
           {pickerCursorCoords.continent}
         </div>
