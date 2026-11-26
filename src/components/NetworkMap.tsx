@@ -73,6 +73,11 @@ interface NetworkMapProps {
   onCancelPinPicker: () => void;
 }
 
+interface LandPathItem {
+  id: string | number;
+  d: string;
+}
+
 interface ProjectedRouteItem {
   key: string;
   route: RouteSector;
@@ -96,12 +101,6 @@ interface ProjectedAirportItem {
   y: number;
   count: number;
   liveCount: number;
-}
-
-interface HoveredRouteTooltip {
-  item: ProjectedRouteItem;
-  clientX: number;
-  clientY: number;
 }
 
 function clampRing(ring: Position[]): Position[] | null {
@@ -169,6 +168,133 @@ function prefersReducedMotion(): boolean {
   );
 }
 
+/* ============================================================================
+ * Memoized SVG sub-layers: isolate static landmasses, live overlay, base routes,
+ * and hit-areas so hovering or moving the mouse NEVER re-reconciles hundreds of
+ * SVG polygons/paths (prevents Chromium SVG tile drops & background flicker).
+ * ============================================================================ */
+
+const LandLayer = React.memo(function LandLayer({
+  landPaths,
+  landFill,
+  landStroke,
+  strokeWidth,
+}: {
+  landPaths: LandPathItem[];
+  landFill: string;
+  landStroke: string;
+  strokeWidth: string;
+}) {
+  return (
+    <g className="land-group">
+      {landPaths.map((land) => (
+        <path
+          key={land.id}
+          className="land-path"
+          d={land.d}
+          fill={landFill}
+          stroke={landStroke}
+          strokeWidth={strokeWidth}
+        />
+      ))}
+    </g>
+  );
+});
+
+const LiveOverlayLayer = React.memo(function LiveOverlayLayer({
+  items,
+  stroke,
+  strokeWidth,
+  dashArray,
+  opacity,
+}: {
+  items: ProjectedLiveOverlayItem[];
+  stroke: string;
+  strokeWidth: string;
+  dashArray: string;
+  opacity: number;
+}) {
+  if (!items.length) return null;
+  return (
+    <g className="live-overlay-group pointer-events-none" opacity={opacity}>
+      {items.map((item) =>
+        item.paths.map((dStr, segIdx) => (
+          <path
+            key={`${item.key}-${segIdx}`}
+            d={dStr}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={strokeWidth}
+            strokeDasharray={dashArray}
+          />
+        )),
+      )}
+    </g>
+  );
+});
+
+const BaseRoutesLayer = React.memo(function BaseRoutesLayer({
+  projectedRoutes,
+  baseStrokeWidth,
+}: {
+  projectedRoutes: ProjectedRouteItem[];
+  baseStrokeWidth: string;
+}) {
+  return (
+    <>
+      {projectedRoutes.map((item) =>
+        item.paths.map((dStr, segIdx) => (
+          <path
+            key={`${item.key}-${segIdx}`}
+            className="route-visible-path"
+            d={dStr}
+            stroke={item.color}
+            strokeWidth={baseStrokeWidth}
+          />
+        )),
+      )}
+    </>
+  );
+});
+
+const RouteHitAreasLayer = React.memo(function RouteHitAreasLayer({
+  projectedRoutes,
+  hitWidth,
+  disabled,
+  onHoverEnter,
+  onHoverMove,
+  onHoverLeave,
+  onSelect,
+}: {
+  projectedRoutes: ProjectedRouteItem[];
+  hitWidth: string;
+  disabled: boolean;
+  onHoverEnter: (item: ProjectedRouteItem, e: React.MouseEvent<SVGPathElement>) => void;
+  onHoverMove: (e: React.MouseEvent<SVGPathElement>) => void;
+  onHoverLeave: () => void;
+  onSelect: (item: ProjectedRouteItem, e: React.MouseEvent<SVGPathElement>) => void;
+}) {
+  if (disabled) return null;
+  return (
+    <g className="route-hit-group">
+      {projectedRoutes.map((item) =>
+        item.paths.map((dStr, segIdx) => (
+          <path
+            key={`hit-${item.key}-${segIdx}`}
+            className="route-hit-area"
+            d={dStr}
+            strokeWidth={hitWidth}
+            onMouseEnter={(e) => onHoverEnter(item, e)}
+            onMouseMove={onHoverMove}
+            onMouseLeave={onHoverLeave}
+            onClick={(e) => onSelect(item, e)}
+          />
+        )),
+      )}
+    </g>
+  );
+});
+
 export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function NetworkMap(
   {
     visibleAirports,
@@ -202,6 +328,11 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
   const containerRef = useRef<HTMLDivElement | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const zoomBehaviorRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const tooltipElRef = useRef<HTMLDivElement | null>(null);
+  const drawPreviewLineRef = useRef<SVGLineElement | null>(null);
+  const tooltipPosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const hoverLeaveRafRef = useRef<number | null>(null);
+  const pickerRafRef = useRef<number | null>(null);
 
   const [dimensions, setDimensions] = useState<{ width: number; height: number }>(() => ({
     width: typeof window !== 'undefined' ? window.innerWidth : 1280,
@@ -210,11 +341,51 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
 
   const [zoomTransform, setZoomTransform] = useState<d3.ZoomTransform>(() => d3.zoomIdentity);
   const [hoveredAirportIcao, setHoveredAirportIcao] = useState<string | null>(null);
-  const [hoveredRouteTooltip, setHoveredRouteTooltip] = useState<HoveredRouteTooltip | null>(null);
+  const [hoveredRouteItem, setHoveredRouteItem] = useState<ProjectedRouteItem | null>(null);
   const [pickerCursorCoords, setPickerCursorCoords] = useState<PickedCoordinates | null>(null);
-  const [drawCursorMapPt, setDrawCursorMapPt] = useState<[number, number] | null>(null);
 
   const isCoordinatePickMode = pinPickerActive || (sandboxMode && sandboxTool === 'add-airport');
+
+  const computeTooltipTransform = useCallback(
+    (clientX: number, clientY: number) => {
+      const pad = 16;
+      const estW = 248;
+      const estH = 98;
+      const left = Math.min(
+        Math.max(pad, clientX + 14),
+        Math.max(pad, dimensions.width - estW - pad),
+      );
+      const top = Math.min(
+        Math.max(72, clientY - estH - 12),
+        Math.max(72, dimensions.height - estH - pad),
+      );
+      return `translate3d(${Math.round(left)}px, ${Math.round(top)}px, 0)`;
+    },
+    [dimensions.width, dimensions.height],
+  );
+
+  // Position floating route tooltip directly on the DOM without triggering React re-renders
+  const updateTooltipDomPosition = useCallback(
+    (clientX: number, clientY: number) => {
+      tooltipPosRef.current = { x: clientX, y: clientY };
+      const el = tooltipElRef.current;
+      if (!el) return;
+      el.style.transform = computeTooltipTransform(clientX, clientY);
+    },
+    [computeTooltipTransform],
+  );
+
+  // Cleanup any pending animation frames on unmount
+  useEffect(() => {
+    return () => {
+      if (hoverLeaveRafRef.current !== null) {
+        window.cancelAnimationFrame(hoverLeaveRafRef.current);
+      }
+      if (pickerRafRef.current !== null) {
+        window.cancelAnimationFrame(pickerRafRef.current);
+      }
+    };
+  }, []);
 
   // Debounced resize observer
   useEffect(() => {
@@ -252,7 +423,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
   }, [dimensions]);
 
   // Memoized land paths
-  const landPaths = useMemo(() => {
+  const landPaths = useMemo<LandPathItem[]>(() => {
     const pathGen = d3.geoPath().projection(projection);
     return WORLD_GEOJSON.features
       .map((feat, idx) => ({
@@ -262,7 +433,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
       .filter((item) => item.d.length > 0);
   }, [projection]);
 
-  // Memoized live baseline ghost overlay (Sandbox Mode overlay for current live routes)
+  // Memoized live baseline ghost overlay (Edit Mode overlay for current live routes)
   const projectedLiveOverlay = useMemo<ProjectedLiveOverlayItem[]>(() => {
     if (!sandboxMode || !showLiveRoutesOverlay) return [];
 
@@ -297,7 +468,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
     return items;
   }, [sandboxMode, showLiveRoutesOverlay, liveOverlayRoutes, liveAirportByIcao, projection]);
 
-  // Memoized active route geometries (live or sandbox) with parallel separation
+  // Memoized active route geometries (live or Edit Mode) with parallel separation
   const projectedRoutes = useMemo<ProjectedRouteItem[]>(() => {
     if (sandboxMode && !showSandboxRoutes) return [];
 
@@ -503,12 +674,12 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
   ]);
 
   const computeGeoFromPointer = useCallback(
-    (event: React.MouseEvent<SVGSVGElement>): PickedCoordinates | null => {
+    (clientX: number, clientY: number): PickedCoordinates | null => {
       const svgEl = svgRef.current;
       if (!svgEl || !projection.invert) return null;
       const rect = svgEl.getBoundingClientRect();
-      const sx = event.clientX - rect.left;
-      const sy = event.clientY - rect.top;
+      const sx = clientX - rect.left;
+      const sy = clientY - rect.top;
       const [mx, my] = zoomTransform.invert([sx, sy]);
       const geo = projection.invert([mx, my]);
       if (!geo || Number.isNaN(geo[0]) || Number.isNaN(geo[1])) return null;
@@ -523,28 +694,94 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
     [projection, zoomTransform],
   );
 
-  const handleSvgMouseMove = (event: React.MouseEvent<SVGSVGElement>) => {
-    if (isCoordinatePickMode) {
-      setPickerCursorCoords(computeGeoFromPointer(event));
-    } else if (pickerCursorCoords) {
+  // Zero-rerender pointer tracking for Draw preview line + RAF-throttled coordinate picker
+  const handleSvgMouseMove = useCallback(
+    (event: React.MouseEvent<SVGSVGElement>) => {
+      if (isCoordinatePickMode) {
+        const cx = event.clientX;
+        const cy = event.clientY;
+        if (pickerRafRef.current === null) {
+          pickerRafRef.current = window.requestAnimationFrame(() => {
+            pickerRafRef.current = null;
+            setPickerCursorCoords(computeGeoFromPointer(cx, cy));
+          });
+        }
+      }
+
+      if (
+        sandboxMode &&
+        sandboxTool === 'draw' &&
+        pendingOriginProjected &&
+        svgRef.current &&
+        drawPreviewLineRef.current
+      ) {
+        const rect = svgRef.current.getBoundingClientRect();
+        const [mx, my] = zoomTransform.invert([
+          event.clientX - rect.left,
+          event.clientY - rect.top,
+        ]);
+        const line = drawPreviewLineRef.current;
+        line.setAttribute('x2', String(mx));
+        line.setAttribute('y2', String(my));
+        line.style.display = '';
+      }
+    },
+    [isCoordinatePickMode, computeGeoFromPointer, sandboxMode, sandboxTool, pendingOriginProjected, zoomTransform],
+  );
+
+  useEffect(() => {
+    if (!isCoordinatePickMode) {
       setPickerCursorCoords(null);
     }
+  }, [isCoordinatePickMode]);
 
-    if (sandboxMode && sandboxTool === 'draw' && sandboxPendingOrigin && svgRef.current) {
-      const rect = svgRef.current.getBoundingClientRect();
-      const [mx, my] = zoomTransform.invert([
-        event.clientX - rect.left,
-        event.clientY - rect.top,
-      ]);
-      setDrawCursorMapPt([mx, my]);
-    } else if (drawCursorMapPt) {
-      setDrawCursorMapPt(null);
+  // Stable route hover callbacks so RouteHitAreasLayer never re-renders on hover
+  const handleRouteHoverEnter = useCallback(
+    (item: ProjectedRouteItem, e: React.MouseEvent<SVGPathElement>) => {
+      if (hoverLeaveRafRef.current !== null) {
+        window.cancelAnimationFrame(hoverLeaveRafRef.current);
+        hoverLeaveRafRef.current = null;
+      }
+      updateTooltipDomPosition(e.clientX, e.clientY);
+      setHoveredRouteItem((prev) => (prev?.key === item.key ? prev : item));
+    },
+    [updateTooltipDomPosition],
+  );
+
+  const handleRouteHoverMove = useCallback(
+    (e: React.MouseEvent<SVGPathElement>) => {
+      updateTooltipDomPosition(e.clientX, e.clientY);
+    },
+    [updateTooltipDomPosition],
+  );
+
+  const handleRouteHoverLeave = useCallback(() => {
+    if (hoverLeaveRafRef.current !== null) {
+      window.cancelAnimationFrame(hoverLeaveRafRef.current);
     }
-  };
+    // Defer clearing by 1 frame so sweeping seamlessly across adjacent routes never flashes unhovered
+    hoverLeaveRafRef.current = window.requestAnimationFrame(() => {
+      hoverLeaveRafRef.current = null;
+      setHoveredRouteItem(null);
+    });
+  }, []);
+
+  const handleRouteHitClick = useCallback(
+    (item: ProjectedRouteItem, e: React.MouseEvent<SVGPathElement>) => {
+      e.stopPropagation();
+      if (hoverLeaveRafRef.current !== null) {
+        window.cancelAnimationFrame(hoverLeaveRafRef.current);
+        hoverLeaveRafRef.current = null;
+      }
+      setHoveredRouteItem(null);
+      onSelectRoute(item.route, item.sourceIndex, item.key);
+    },
+    [onSelectRoute],
+  );
 
   const handleSvgClick = (event: React.MouseEvent<SVGSVGElement>) => {
     if (isCoordinatePickMode) {
-      const coords = computeGeoFromPointer(event);
+      const coords = computeGeoFromPointer(event.clientX, event.clientY);
       if (coords) {
         onPickCoordinates(coords);
       }
@@ -560,28 +797,34 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
   const k = Math.max(1, zoomTransform.k || 1);
   const invK = 1 / k;
   const activeFocusAirport = hoveredAirportIcao || selectedAirportIcao || sandboxPendingOrigin;
-  const activeRouteKey = hoveredRouteTooltip?.item.key || selectedRouteKey;
+  const activeRouteKey = hoveredRouteItem?.key || selectedRouteKey;
+  const hasActiveFocus = Boolean(activeRouteKey || activeFocusAirport);
+
+  // Only render the few currently highlighted routes in the top overlay group
+  const highlightedRoutes = useMemo(() => {
+    if (!hasActiveFocus) return [];
+    return projectedRoutes.filter(
+      (item) =>
+        activeRouteKey === item.key ||
+        Boolean(
+          activeFocusAirport &&
+            (item.route.origin === activeFocusAirport ||
+              item.route.dest === activeFocusAirport),
+        ),
+    );
+  }, [hasActiveFocus, projectedRoutes, activeRouteKey, activeFocusAirport]);
 
   const landFill = darkMode ? '#1c2433' : '#e1e6ed';
   const landStroke = darkMode ? '#0b0f17' : '#f3f5f8';
   const markerFill = darkMode ? '#0b0f17' : '#ffffff';
   const labelHalo = darkMode ? '#0b0f17' : '#f3f5f8';
 
-  const tooltipStyle = useMemo(() => {
-    if (!hoveredRouteTooltip) return undefined;
-    const pad = 16;
-    const estW = 248;
-    const estH = 98;
-    const left = Math.min(
-      Math.max(pad, hoveredRouteTooltip.clientX + 14),
-      Math.max(pad, dimensions.width - estW - pad),
-    );
-    const top = Math.min(
-      Math.max(92, hoveredRouteTooltip.clientY - estH - 12),
-      Math.max(92, dimensions.height - estH - pad),
-    );
-    return { left, top };
-  }, [hoveredRouteTooltip, dimensions]);
+  const landStrokeW = (0.65 * invK).toFixed(4);
+  const liveStrokeW = (1.6 * invK).toFixed(4);
+  const liveDash = `${(5 * invK).toFixed(2)},${(4 * invK).toFixed(2)}`;
+  const baseRouteStrokeW = (1.9 * invK).toFixed(4);
+  const highlightRouteStrokeW = (3.5 * invK).toFixed(4);
+  const hitRouteStrokeW = (14 * invK).toFixed(4);
 
   return (
     <div
@@ -599,9 +842,15 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
         aria-label="DEAT Global Route Network Map"
         onMouseMove={handleSvgMouseMove}
         onMouseLeave={() => {
-          setHoveredRouteTooltip(null);
+          if (hoverLeaveRafRef.current !== null) {
+            window.cancelAnimationFrame(hoverLeaveRafRef.current);
+            hoverLeaveRafRef.current = null;
+          }
+          setHoveredRouteItem(null);
           setPickerCursorCoords(null);
-          setDrawCursorMapPt(null);
+          if (drawPreviewLineRef.current) {
+            drawPreviewLineRef.current.style.display = 'none';
+          }
         }}
         onClick={handleSvgClick}
         className={`block w-full h-full select-none ${
@@ -614,121 +863,77 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
           className="map-layer"
           transform={`translate(${zoomTransform.x}, ${zoomTransform.y}) scale(${zoomTransform.k})`}
         >
-          {/* Land Polygons */}
-          <g className="land-group">
-            {landPaths.map((land) => (
-              <path
-                key={land.id}
-                className="land-path"
-                d={land.d}
-                fill={landFill}
-                stroke={landStroke}
-                strokeWidth={(0.65 * invK).toFixed(4)}
-              />
-            ))}
+          {/* Isolated Memoized Land Polygons */}
+          <LandLayer
+            landPaths={landPaths}
+            landFill={landFill}
+            landStroke={landStroke}
+            strokeWidth={landStrokeW}
+          />
+
+          {/* Isolated Memoized Live Baseline Ghost Overlay */}
+          <LiveOverlayLayer
+            items={projectedLiveOverlay}
+            stroke={darkMode ? '#94a3b8' : '#475569'}
+            strokeWidth={liveStrokeW}
+            dashArray={liveDash}
+            opacity={showSandboxRoutes ? 0.45 : 0.85}
+          />
+
+          {/* Base Flight Sector Curves: dims as a single group opacity (no per-path DOM churn) */}
+          <g className="routes-base-group" opacity={hasActiveFocus ? 0.14 : 0.9}>
+            <BaseRoutesLayer
+              projectedRoutes={projectedRoutes}
+              baseStrokeWidth={baseRouteStrokeW}
+            />
           </g>
 
-          {/* Live Baseline Ghost Overlay (Sandbox comparison layer) */}
-          {projectedLiveOverlay.length > 0 && (
-            <g className="live-overlay-group pointer-events-none">
-              {projectedLiveOverlay.map((item) =>
-                item.paths.map((dStr, segIdx) => (
+          {/* Highlighted Flight Sector Curves (only the 1-N focused routes rendered on top) */}
+          {highlightedRoutes.length > 0 && (
+            <g className="routes-highlight-group pointer-events-none">
+              {highlightedRoutes.map((item) => {
+                const strokeColor = sandboxMode ? item.color : HIGHLIGHT_ROUTE_COLOR;
+                return item.paths.map((dStr, segIdx) => (
                   <path
-                    key={`${item.key}-${segIdx}`}
+                    key={`hl-${item.key}-${segIdx}`}
+                    className="route-visible-path"
                     d={dStr}
-                    fill="none"
-                    stroke={darkMode ? '#94a3b8' : '#475569'}
-                    strokeWidth={(1.6 * invK).toFixed(4)}
-                    strokeDasharray={`${(5 * invK).toFixed(2)},${(4 * invK).toFixed(2)}`}
-                    opacity={showSandboxRoutes ? 0.45 : 0.85}
+                    stroke={strokeColor}
+                    strokeWidth={highlightRouteStrokeW}
+                    opacity={1}
                   />
-                )),
-              )}
+                ));
+              })}
             </g>
           )}
 
-          {/* Active Flight Sector Curves */}
-          <g className="routes-group">
-            {projectedRoutes.map((item) => {
-              const isHighlighted =
-                activeRouteKey === item.key ||
-                Boolean(
-                  activeFocusAirport &&
-                    (item.route.origin === activeFocusAirport ||
-                      item.route.dest === activeFocusAirport),
-                );
-              const isDimmed =
-                Boolean(activeRouteKey || activeFocusAirport) && !isHighlighted;
-              const strokeColor = sandboxMode
-                ? item.color
-                : isHighlighted
-                  ? HIGHLIGHT_ROUTE_COLOR
-                  : item.color;
-              const strokeWidth = ((isHighlighted ? 3.5 : 1.9) * invK).toFixed(4);
-              const hitWidth = (14 * invK).toFixed(4);
+          {/* Isolated Memoized Invisible Route Hit Areas */}
+          <RouteHitAreasLayer
+            projectedRoutes={projectedRoutes}
+            hitWidth={hitRouteStrokeW}
+            disabled={isCoordinatePickMode}
+            onHoverEnter={handleRouteHoverEnter}
+            onHoverMove={handleRouteHoverMove}
+            onHoverLeave={handleRouteHoverLeave}
+            onSelect={handleRouteHitClick}
+          />
 
-              return (
-                <g key={item.key} className="route-group">
-                  {item.paths.map((dStr, segIdx) => (
-                    <React.Fragment key={segIdx}>
-                      <path
-                        className="route-visible-path"
-                        d={dStr}
-                        stroke={strokeColor}
-                        strokeWidth={strokeWidth}
-                        opacity={isDimmed ? 0.14 : isHighlighted ? 1 : 0.9}
-                      />
-                      {!isCoordinatePickMode && (
-                        <path
-                          className="route-hit-area"
-                          d={dStr}
-                          strokeWidth={hitWidth}
-                          onMouseEnter={(e) =>
-                            setHoveredRouteTooltip({
-                              item,
-                              clientX: e.clientX,
-                              clientY: e.clientY,
-                            })
-                          }
-                          onMouseMove={(e) =>
-                            setHoveredRouteTooltip({
-                              item,
-                              clientX: e.clientX,
-                              clientY: e.clientY,
-                            })
-                          }
-                          onMouseLeave={() => setHoveredRouteTooltip(null)}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setHoveredRouteTooltip(null);
-                            onSelectRoute(item.route, item.sourceIndex, item.key);
-                          }}
-                        />
-                      )}
-                    </React.Fragment>
-                  ))}
-                </g>
-              );
-            })}
-          </g>
-
-          {/* Live Sandbox Draw Preview Line */}
-          {sandboxMode &&
-            sandboxTool === 'draw' &&
-            pendingOriginProjected &&
-            drawCursorMapPt && (
-              <line
-                x1={pendingOriginProjected[0]}
-                y1={pendingOriginProjected[1]}
-                x2={drawCursorMapPt[0]}
-                y2={drawCursorMapPt[1]}
-                stroke={sandboxDrawColor}
-                strokeWidth={(2.2 * invK).toFixed(4)}
-                strokeDasharray={`${(6 * invK).toFixed(2)},${(4 * invK).toFixed(2)}`}
-                opacity={0.85}
-                pointerEvents="none"
-              />
-            )}
+          {/* Live Edit Mode Draw Preview Line (updated directly via ref, zero re-renders) */}
+          {sandboxMode && sandboxTool === 'draw' && pendingOriginProjected && (
+            <line
+              ref={drawPreviewLineRef}
+              x1={pendingOriginProjected[0]}
+              y1={pendingOriginProjected[1]}
+              x2={pendingOriginProjected[0]}
+              y2={pendingOriginProjected[1]}
+              stroke={sandboxDrawColor}
+              strokeWidth={(2.2 * invK).toFixed(4)}
+              strokeDasharray={`${(6 * invK).toFixed(2)},${(4 * invK).toFixed(2)}`}
+              opacity={0.85}
+              pointerEvents="none"
+              style={{ display: 'none' }}
+            />
+          )}
 
           {/* Airport Markers, Count Overlays & Labels */}
           <g className="nodes-group">
@@ -817,7 +1022,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
                     </text>
                   )}
 
-                  {/* Subtle halo ring for newly added / modified sandbox stations */}
+                  {/* Subtle halo ring for newly added / modified Edit Mode stations */}
                   {(isSandboxAdded || isSandboxModified) && (
                     <circle
                       r={outerR + 3.2}
@@ -907,32 +1112,37 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
         </g>
       </svg>
 
-      {/* Route Hover Tooltip */}
-      {hoveredRouteTooltip && tooltipStyle && !isCoordinatePickMode && (
+      {/* Route Hover Tooltip (GPU transform-only positioning, solid surface to avoid SVG backdrop-blur stalls) */}
+      {hoveredRouteItem && !isCoordinatePickMode && (
         <div
-          style={tooltipStyle}
-          className="fixed z-40 pointer-events-none max-w-[260px] rounded border border-[var(--border-strong)] bg-[var(--surface)]/95 backdrop-blur-sm px-3 py-2 text-xs shadow-sm"
+          ref={tooltipElRef}
+          style={{
+            left: 0,
+            top: 0,
+            transform: computeTooltipTransform(tooltipPosRef.current.x, tooltipPosRef.current.y),
+          }}
+          className="fixed z-40 pointer-events-none max-w-[260px] rounded border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-xs shadow-sm"
         >
           <div className="flex items-center gap-2 font-semibold text-[var(--ink)]">
             <span
               className="inline-block h-2 w-2 rounded-full shrink-0"
-              style={{ backgroundColor: hoveredRouteTooltip.item.color }}
+              style={{ backgroundColor: hoveredRouteItem.color }}
             />
             <span className="truncate">
-              {hoveredRouteTooltip.item.originCity} → {hoveredRouteTooltip.item.destCity}
+              {hoveredRouteItem.originCity} → {hoveredRouteItem.destCity}
             </span>
           </div>
           <div className="mt-1 flex items-center gap-2 font-mono text-[11px] tabular-nums text-[var(--ink-secondary)]">
             <span>
-              {hoveredRouteTooltip.item.route.origin}–{hoveredRouteTooltip.item.route.dest}
+              {hoveredRouteItem.route.origin}–{hoveredRouteItem.route.dest}
             </span>
             <span aria-hidden="true">·</span>
-            <span>{hoveredRouteTooltip.item.distanceNm.toLocaleString()} NM</span>
+            <span>{hoveredRouteItem.distanceNm.toLocaleString()} NM</span>
             <span aria-hidden="true">·</span>
-            <span>{hoveredRouteTooltip.item.route.type}</span>
+            <span>{hoveredRouteItem.route.type}</span>
           </div>
           <div className="mt-1 font-mono text-[10.5px] text-[var(--ink-muted)] truncate">
-            {hoveredRouteTooltip.item.route.aircraftTypes.join(', ')}
+            {hoveredRouteItem.route.aircraftTypes.join(', ')}
           </div>
           {sandboxMode && (
             <div className="mt-1 font-mono text-[10px] text-amber-700 dark:text-amber-400">
@@ -942,7 +1152,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
         </div>
       )}
 
-      {/* Coordinate Picker Readout (Network Editor Pin Picker OR Sandbox Add-Airport tool) */}
+      {/* Coordinate Picker Readout (Network Editor Pin Picker OR Edit Mode Add-Airport tool) */}
       {pinPickerActive && (
         <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 rounded border border-[var(--deat-red)] bg-[var(--surface)] px-4 py-2 shadow-sm">
           <div className="text-xs font-medium text-[var(--ink)]">
@@ -968,7 +1178,7 @@ export const NetworkMap = forwardRef<NetworkMapHandle, NetworkMapProps>(function
       )}
 
       {sandboxMode && sandboxTool === 'add-airport' && pickerCursorCoords && (
-        <div className="fixed top-16 right-4 z-30 pointer-events-none rounded border border-amber-500/70 bg-[var(--surface)]/95 px-3 py-1.5 font-mono text-[11px] tabular-nums text-[var(--ink)] shadow-sm">
+        <div className="fixed top-16 right-4 z-30 pointer-events-none rounded border border-amber-500/70 bg-[var(--surface)] px-3 py-1.5 font-mono text-[11px] tabular-nums text-[var(--ink)] shadow-sm">
           {pickerCursorCoords.lat.toFixed(4)}°, {pickerCursorCoords.lon.toFixed(4)}° ·{' '}
           {pickerCursorCoords.continent}
         </div>
